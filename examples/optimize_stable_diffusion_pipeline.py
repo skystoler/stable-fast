@@ -1,4 +1,4 @@
-MODEL = 'runwayml/stable-diffusion-v1-5'
+MODEL = '/root/autodl-tmp/stable-diffusion-v1-5'
 VARIANT = None
 CUSTOM_PIPELINE = None
 SCHEDULER = 'EulerAncestralDiscreteScheduler'

@@ -16,6 +16,8 @@
 #include "scalar_tensor_erase.h"
 #include "simple_arith_elimination.h"
 
+//#include "graph_constant_node_with_function.h"
+
 namespace sfast {
 namespace jit {
 
@@ -72,6 +74,8 @@ void initJITBindings(py::module m) {
           THPObjectPtr py_callable_ptr(py_callable.ptr());
           RegisterCustomPythonOperator(schema, std::move(py_callable_ptr));
         });
+  
+  //m.def("_jit_graph_constant_node_with_funciton", GraphConstantNodeWithFunction);
 }
 
 } // namespace jit
