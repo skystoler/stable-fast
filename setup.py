@@ -220,11 +220,6 @@ def get_extensions():
 setup(
     name="stable-fast",
     version=get_version(),
-    author="Cheng Zeyi",
-    url="https://github.com/chengzeyi/stable-fast",
-    description=
-    "Stable Fast is an ultra lightweight performance optimization framework"
-    " for Hugging Fase diffuser pipelines.",
     package_dir={
         '': 'src',
     },
