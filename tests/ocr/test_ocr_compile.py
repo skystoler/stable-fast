@@ -7,7 +7,9 @@ from sfast.compilers.ocr_compiler import CompilationConfig, compile_print_reco_m
 
 SOURCE_DIR = "/root/autodl-tmp/data/"
 TRT_PATH = SOURCE_DIR + 'prt_ft13_emptyrecog_invert_0411_147_opt.ts'
-PATH = SOURCE_DIR + 'uniocr_wfeat_240919134829_uniocr_ft47xkat6_240903_75.pth'
+PRINT_RECO_PATH = SOURCE_DIR + 'uniocr_wfeat_240919134829_uniocr_ft47xkat6_240903_75.pth'
+PRINT_FONT_PATH = SOURCE_DIR + 'font47_240724_ft47_a100_mlp6240711_230.pth'
+PRINT_CHAR_SEG_PATH = SOURCE_DIR + 'loc_std2_ft13_atv6_0305_376.pth'
 IMG_URL = SOURCE_DIR + 'text_rectification.jpg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
 
@@ -86,13 +88,18 @@ def test_print_reco_model():
     print(torch.__version__)
     # torch.classes.load_library(TRT_SO_PATH)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    model = torch.jit.load(PATH, map_location=device)
+    model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
     
     images_t, masks_t, token_ids_t = prepare_input(img_url=IMG_URL, device=device)
     """
     not compile
     """
+    print('Begin warmup')
+    for _ in range(3):
+        model(images_t, masks_t, token_ids_t)
+    print('End warmup')
+    
     begin = time.time()
     output = model(images_t, masks_t, token_ids_t)
     end = time.time()
@@ -104,14 +111,16 @@ def test_print_reco_model():
     """
     compile
     """
-    config = CompilationConfig.Default()
-    try:
-        import triton
-        config.enable_triton = True
-    except ImportError:
-        print('Triton not installed, skip')
+    model = torch.compile(model, mode='max-autotune')
+    
+    # config = CompilationConfig.Default()
+    # try:
+    #     import triton
+    #     config.enable_triton = True
+    # except ImportError:
+    #     print('Triton not installed, skip')
         
-    compile_print_reco_model(model, config)
+    # compile_print_reco_model(model, config)
 
     print('Begin warmup')
     for _ in range(3):

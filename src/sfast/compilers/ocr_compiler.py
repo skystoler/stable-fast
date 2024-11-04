@@ -273,7 +273,7 @@ def compile_main_task(m, config):
         _enable_flash_attention()
 
     if config.memory_format is not None:
-        apply_memory_format(m, config, memory_format=config.memory_format)
+        apply_memory_format(m, memory_format=config.memory_format)
 
     if enable_cuda_graph:
         m.forward = make_dynamic_graphed_callable(m.forward)
