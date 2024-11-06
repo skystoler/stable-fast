@@ -12,6 +12,7 @@ PRINT_FONT_PATH = SOURCE_DIR + 'font47_240724_ft47_a100_mlp6240711_230.pth'
 PRINT_CHAR_SEG_PATH = SOURCE_DIR + 'loc_std2_ft13_atv6_0305_376.pth'
 IMG_URL = SOURCE_DIR + 'text_rectification.jpg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
+DATA_LIST_PATH = SOURCE_DIR + ''
 
 class IterationProfiler:
 
@@ -83,6 +84,16 @@ def prepare_input(img_url, device, batch=1, height = 64, width = 832, pad_value 
     mask_t = torch.ones((batch, 1, output_height, output_width), device=device, dtype=dtype)[:, 0]
     token_ids_t = torch.ones((image_t.shape[0], 1), device=device, dtype=torch.int64)
     return image_t, mask_t, token_ids_t
+
+# def timeit(func):
+#     def timeit_wrapper(*args, **kwargs):
+#         start_time = time.perf_counter()
+#         result = func(*args, **kwargs)
+#         end_time = time.perf_counter()
+#         total_time = end_time - start_time
+#         return result
+#     return timeit_wrapper
+
     
 def test_print_reco_model():
     print(torch.__version__)
@@ -91,7 +102,6 @@ def test_print_reco_model():
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
     
-    images_t, masks_t, token_ids_t = prepare_input(img_url=IMG_URL, device=device)
     """
     not compile
     """
@@ -100,18 +110,13 @@ def test_print_reco_model():
         model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
-    begin = time.time()
-    output = model(images_t, masks_t, token_ids_t)
-    end = time.time()
-    
-    print(f'Inference time: {end - begin:.3f}s')
-    peak_mem = torch.cuda.max_memory_allocated()
-    print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
-    
     """
     compile
     """
-    model = torch.compile(model, mode='max-autotune')
+    begin = time.time()
+    compiled_model = torch.compile(model, mode='max-autotune')
+    end = time.time()
+    print(f'Compile time: {end - begin:.3f}s')
     
     # config = CompilationConfig.Default()
     # try:
@@ -124,18 +129,35 @@ def test_print_reco_model():
 
     print('Begin warmup')
     for _ in range(3):
-        model(images_t, masks_t, token_ids_t)
+        compiled_model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
-    begin = time.time()
-    optimize_output = model(images_t, masks_t, token_ids_t)
-    end = time.time()
-    
-    print(f'Inference time: {end - begin:.3f}s')
-    peak_mem = torch.cuda.max_memory_allocated()
-    print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
-    
-    torch.testing.assert_close(output, optimize_output)
+    with open(DATA_LIST_PATH, "r") as fo:
+        img_urls = fo.readlines()
+        
+    for img_url in img_urls[:100]:
+        images_t, masks_t, token_ids_t = prepare_input(img_url=img_url, device=device)
+
+        begin = time.time()
+        output = model(images_t, masks_t, token_ids_t)
+        end = time.time()
+        infer_time = end - begin 
+        print(f'Orignal Inference time: {infer_time:.3f}s')
+        # peak_mem = torch.cuda.max_memory_allocated()
+        # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
+        
+        begin = time.time()
+        optimize_output = compiled_model(images_t, masks_t, token_ids_t)
+        end = time.time()
+        compiled_infer_time = end - begin
+        print(f'Compiled Inference time: {compiled_infer_time:.3f}s')
+        # peak_mem = torch.cuda.max_memory_allocated()
+        # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
+        
+        speed_up = infer_time / compiled_infer_time
+        print(f'Speed up: {speed_up:.3f}')
+        
+        torch.testing.assert_close(output, optimize_output)
     
     
 if __name__ == '__main__':
