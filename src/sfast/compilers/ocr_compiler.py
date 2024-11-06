@@ -280,6 +280,13 @@ def compile_main_task(m, config):
 
          
 def compile_print_reco_model(model, config):
+    # for (name, children) in model.named_children():
+    #     print(1,name)
+    #     for n, c in children.named_children():
+    #         print(2,n)
+    #         for nn, cc in c.named_children():
+    #             print(3,nn)
     quantize(model)
     compile_base_architecture(model.base_architecture, config)
     compile_main_task(model.main_task, config)
+    return model

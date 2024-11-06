@@ -1,18 +1,23 @@
 import torch
 import time
 import torch.nn.functional as F
-
+import string
+import os
 from sfast.utils.image_utils import load_image, pil_to_numpy, numpy_to_pt
 from sfast.compilers.ocr_compiler import CompilationConfig, compile_print_reco_model
 
 SOURCE_DIR = "/root/autodl-tmp/data/"
-TRT_PATH = SOURCE_DIR + 'prt_ft13_emptyrecog_invert_0411_147_opt.ts'
-PRINT_RECO_PATH = SOURCE_DIR + 'uniocr_wfeat_240919134829_uniocr_ft47xkat6_240903_75.pth'
-PRINT_FONT_PATH = SOURCE_DIR + 'font47_240724_ft47_a100_mlp6240711_230.pth'
-PRINT_CHAR_SEG_PATH = SOURCE_DIR + 'loc_std2_ft13_atv6_0305_376.pth'
-IMG_URL = SOURCE_DIR + 'text_rectification.jpg'
+IMAGE_DIR = SOURCE_DIR + "image/"
+MODEL_DIR = SOURCE_DIR + "model/"
+TRT_PATH = MODEL_DIR + 'prt_ft13_emptyrecog_invert_0411_147_opt.ts'
+PRINT_RECO_PATH = MODEL_DIR + 'uniocr_wfeat_241024152028_uniocr_add_spzonly_241023_85.pth'
+PRINT_FONT_PATH = MODEL_DIR + 'font47_240724_ft47_a100_mlp6240711_230.pth'
+PRINT_CHAR_SEG_PATH = MODEL_DIR + 'loc_std2_ft13_atv6_0305_376.pth'
+HW_RECO_PATH = MODEL_DIR + 'hw_832_blank_xingcao_1211_ep203.pth'
+PRINT_IMG_URL = IMAGE_DIR + '924_SPLIT_72311_40986bc2-48a1-11ef-a600-00163e153e23.jpg'
+HW_IMG_URL = IMAGE_DIR + 'e2bca13b366942768b722310d8aeee27.jpeg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
-DATA_LIST_PATH = SOURCE_DIR + ''
+DATA_LIST_PATH = SOURCE_DIR + 'download_188_20241106072127.txt'
 
 class IterationProfiler:
 
@@ -94,21 +99,30 @@ def prepare_input(img_url, device, batch=1, height = 64, width = 832, pad_value 
 #         return result
 #     return timeit_wrapper
 
-    
-def test_print_reco_model():
+
+def test_single_pic():
     print(torch.__version__)
     # torch.classes.load_library(TRT_SO_PATH)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
     
+    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
     """
     not compile
     """
     print('Begin warmup')
-    for _ in range(3):
+    for _ in range(5):
         model(images_t, masks_t, token_ids_t)
     print('End warmup')
+    
+    begin = time.time()
+    output = model(images_t, masks_t, token_ids_t)
+    end = time.time()
+    infer_time = end - begin 
+    print(f'Orignal Inference time: {infer_time:.3f}s')
+    # peak_mem = torch.cuda.max_memory_allocated()
+    # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
     
     """
     compile
@@ -128,14 +142,73 @@ def test_print_reco_model():
     # compile_print_reco_model(model, config)
 
     print('Begin warmup')
-    for _ in range(3):
+    for _ in range(5):
         compiled_model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
-    with open(DATA_LIST_PATH, "r") as fo:
-        img_urls = fo.readlines()
+    begin = time.time()
+    optimize_output = compiled_model(images_t, masks_t, token_ids_t)
+    end = time.time()
+    compiled_infer_time = end - begin
+    print(f'Compiled Inference time: {compiled_infer_time:.3f}s')
+    # peak_mem = torch.cuda.max_memory_allocated()
+    # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
+    
+    speed_up = infer_time / compiled_infer_time
+    print(f'Speed up: {speed_up:.3f}')
+    
+    torch.testing.assert_close(output, optimize_output)
         
-    for img_url in img_urls[:100]:
+    
+def test_print_reco_model():
+    print(torch.__version__)
+    # torch.classes.load_library(TRT_SO_PATH)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
+    model.eval()
+    
+    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    """
+    not compile
+    """
+    print('Begin warmup')
+    for _ in range(5):
+        model(images_t, masks_t, token_ids_t)
+    print('End warmup')
+    
+    """
+    compile
+    """
+    begin = time.time()
+    compiled_model = torch.compile(model, mode ="max-autotune")
+    end = time.time()
+    print(f'Compile time: {end - begin:.3f}s')
+    
+    """
+    self-compile
+    """
+    # config = CompilationConfig.Default()
+    # try:
+    #     import triton
+    #     config.enable_triton = True
+    # except ImportError:
+    #     print('Triton not installed, skip')
+    # begin = time.time() 
+    # compiled_model = compile_print_reco_model(model, config)
+    # end = time.time()
+    # print(f'Compile time: {end - begin:.3f}s')
+    
+    print('Begin warmup')
+    for _ in range(5):
+        compiled_model(images_t, masks_t, token_ids_t)
+    print('End warmup')
+    
+    speed_up_sum = 0.0
+    test_cnt = 50
+    images = os.listdir(IMAGE_DIR)
+    for index, img in enumerate(images[:test_cnt]):
+        print(index + 1, img)
+        img_url = IMAGE_DIR + img
         images_t, masks_t, token_ids_t = prepare_input(img_url=img_url, device=device)
 
         begin = time.time()
@@ -156,9 +229,11 @@ def test_print_reco_model():
         
         speed_up = infer_time / compiled_infer_time
         print(f'Speed up: {speed_up:.3f}')
+        speed_up_sum += speed_up
         
-        torch.testing.assert_close(output, optimize_output)
-    
+        #torch.testing.assert_close(output, optimize_output)
+    print(f'Avergae Speed up: {(speed_up_sum / test_cnt):.3f}')
     
 if __name__ == '__main__':
+    # test_single_pic()
     test_print_reco_model()

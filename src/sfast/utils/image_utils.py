@@ -4,6 +4,7 @@ import requests
 import os
 import numpy as np
 import torch
+import io
 
 PIL_INTERPOLATION = {
     "linear": Image.Resampling.BILINEAR,
@@ -18,7 +19,7 @@ def load_image(
 ) -> Image.Image:
     if isinstance(image, str):
         if image.startswith("http://") or image.startswith("https://"):
-            image = Image.open(requests.get(image, stream=True).raw)
+            image = Image.open(requests.get(image).raw)
         elif os.path.isfile(image):
             image = Image.open(image)
         else:
