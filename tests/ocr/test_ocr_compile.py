@@ -1,10 +1,12 @@
 import torch
 import time
 import torch.nn.functional as F
-import string
 import os
 from sfast.utils.image_utils import load_image, pil_to_numpy, numpy_to_pt
 from sfast.compilers.ocr_compiler import CompilationConfig, compile_print_reco_model
+from sfast.utils.trt import TrtExecutor
+import torchvision.models as models
+from torch.profiler import profile, record_function, ProfilerActivity
 
 SOURCE_DIR = "/root/autodl-tmp/data/"
 IMAGE_DIR = SOURCE_DIR + "image/"
@@ -18,6 +20,7 @@ PRINT_IMG_URL = IMAGE_DIR + '924_SPLIT_72311_40986bc2-48a1-11ef-a600-00163e153e2
 HW_IMG_URL = IMAGE_DIR + 'e2bca13b366942768b722310d8aeee27.jpeg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
 DATA_LIST_PATH = SOURCE_DIR + 'download_188_20241106072127.txt'
+TRT_MODEL_PATH = MODEL_DIR + ''
 
 class IterationProfiler:
 
@@ -102,7 +105,6 @@ def prepare_input(img_url, device, batch=1, height = 64, width = 832, pad_value 
 
 def test_single_pic():
     print(torch.__version__)
-    # torch.classes.load_library(TRT_SO_PATH)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
@@ -160,9 +162,8 @@ def test_single_pic():
     torch.testing.assert_close(output, optimize_output)
         
     
-def test_print_reco_model():
+def test_compile_print_reco_model():
     print(torch.__version__)
-    # torch.classes.load_library(TRT_SO_PATH)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
@@ -233,7 +234,43 @@ def test_print_reco_model():
         
         #torch.testing.assert_close(output, optimize_output)
     print(f'Avergae Speed up: {(speed_up_sum / test_cnt):.3f}')
+
+
+def test_trt():
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    executor = TrtExecutor(engine_file_path=TRT_MODEL_PATH, device_id=device)
+    
+    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    
+    # print('Begin warmup')
+    # for _ in range(5):
+    #     pass
+    # print('End warmup')
+    
+    begin = time.time()
+    output = executor.execute(images_t, masks_t, token_ids_t)
+    end = time.time()
+    infer_time = end - begin
+    print(f'TRT Inference time: {infer_time:.3f}s')
+
+
+def test_model_bottleneck():
+    print(torch.__version__)
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
+    model.eval()
+    
+    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    
+    activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
+    with profile(activities=activities, record_shapes=True) as prof:
+        with record_function("model_inference"):
+            model(images_t, masks_t, token_ids_t)
+            
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     
 if __name__ == '__main__':
     # test_single_pic()
-    test_print_reco_model()
+    # test_compile_print_reco_model()
+    test_trt()
+    # test_model_bottleneck()
