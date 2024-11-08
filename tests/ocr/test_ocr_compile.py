@@ -88,19 +88,18 @@ def prepare_input(img_url, device, batch=1, height = 64, width = 832, pad_value 
         image_t, (padding_left_, padding_right_, padding_top_, padding_bottom_), value=pad_value
     )
     image_t = image_t.to(device=device, dtype=dtype)
-
     mask_t = torch.ones((batch, 1, output_height, output_width), device=device, dtype=dtype)[:, 0]
     token_ids_t = torch.ones((image_t.shape[0], 1), device=device, dtype=torch.int64)
     return image_t, mask_t, token_ids_t
 
-# def timeit(func):
-#     def timeit_wrapper(*args, **kwargs):
-#         start_time = time.perf_counter()
-#         result = func(*args, **kwargs)
-#         end_time = time.perf_counter()
-#         total_time = end_time - start_time
-#         return result
-#     return timeit_wrapper
+def prof(func):
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    start.record()
+    func()
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    start.record()
 
 
 def test_single_pic():
@@ -118,10 +117,15 @@ def test_single_pic():
         model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
-    begin = time.time()
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    start.record()
     output = model(images_t, masks_t, token_ids_t)
-    end = time.time()
-    infer_time = end - begin 
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    end.record()
+    torch.cuda.synchronize()
+    infer_time = start.elapsed_time(end)
     print(f'Orignal Inference time: {infer_time:.3f}s')
     # peak_mem = torch.cuda.max_memory_allocated()
     # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
@@ -148,10 +152,15 @@ def test_single_pic():
         compiled_model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
-    begin = time.time()
-    optimize_output = compiled_model(images_t, masks_t, token_ids_t)
-    end = time.time()
-    compiled_infer_time = end - begin
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    start.record()
+    optimize_output = model(images_t, masks_t, token_ids_t)
+    start = torch.cuda.Event(enable_timing=True)  # Create a start event
+    end = torch.cuda.Event(enable_timing=True)  # Create an end event
+    end.record()
+    torch.cuda.synchronize()
+    compiled_infer_time = start.elapsed_time(end)
     print(f'Compiled Inference time: {compiled_infer_time:.3f}s')
     # peak_mem = torch.cuda.max_memory_allocated()
     # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
@@ -270,7 +279,7 @@ def test_model_bottleneck():
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
     
 if __name__ == '__main__':
-    # test_single_pic()
+    test_single_pic()
     # test_compile_print_reco_model()
-    test_trt()
+    # test_trt()
     # test_model_bottleneck()
