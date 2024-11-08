@@ -2,10 +2,14 @@ import threading
 import torch
 import tensorrt as trt
 
-from cuda import cudart
 from functools import reduce
 
-
+try:
+    from cuda import cudart
+except ImportError:
+    logger.warning(
+        'please pip3 install cuda-python.')
+    
 class TrtExecutor:
     def __init__(self, engine_file_path, device_id=0):
         err_type = cudart.cudaSetDevice(device_id)
@@ -98,3 +102,65 @@ class TrtExecutor:
         print("Batch dimension is", "implicit" if self.engine.has_implicit_batch_dimension else "explicit")
         for info in self.io_info:
             print("input" if info[1] else "output", info[0], info[2], info[3])
+
+# import cv2
+# import numpy as np
+# import tensorrt as trt
+# import pycuda.driver as cuda
+# import torch
+# from typing import Union, Optional, Sequence,Dict,Any
+# import torchvision.transforms as transforms
+# from PIL import Image
+ 
+ 
+ 
+# def load_engine(self, engine_file_path):
+#     TRT_LOGGER = trt.Logger()
+#     assert os.path.exists(engine_file_path)
+#     print("Reading engine from file {}".format(engine_file_path))
+#     with open(engine_file_path, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
+#         return runtime.deserialize_cuda_engine(f.read())
+    
+ 
+# def engine_infer(self, engine, input_image):
+#     """
+#     engine: load_engine函数返回的trt模型引擎
+#     input_image: 模型推理输入图像，尺寸为(batch_size, channel, height, width)
+#     output：Unet模型推理的结果，尺寸为(batch_size, class_num, height, width)
+#     """
+#     batch_size = input_image.shape[0]
+#     image_channel = input_image.shape[1]
+#     image_height = input_image.shape[2]
+#     image_width = input_image.shape[3]
+ 
+#     with engine.create_execution_context() as context:
+#         # Set input shape based on image dimensions for inference
+#         context.set_binding_shape(engine.get_binding_index("input"), (batch_size, image_channel, image_height, image_width))
+ 
+#         # Allocate host and device buffers
+#         bindings = []
+#         for binding in engine:
+#             binding_idx = engine.get_binding_index(binding)
+#             size = trt.volume(context.get_binding_shape(binding_idx))
+#             dtype = trt.nptype(engine.get_binding_dtype(binding))
+#             if engine.binding_is_input(binding):
+#                 input_buffer = np.ascontiguousarray(input_image)
+#                 input_memory = cuda.mem_alloc(input_image.nbytes)
+#                 bindings.append(int(input_memory))
+#             else:
+#                 output_buffer = cuda.pagelocked_empty(size, dtype)
+#                 output_memory = cuda.mem_alloc(output_buffer.nbytes)
+#                 bindings.append(int(output_memory))
+ 
+#         stream = cuda.Stream()
+#         # Transfer input data to the GPU.
+#         cuda.memcpy_htod_async(input_memory, input_buffer, stream)
+#         # Run inference
+#         context.execute_async_v2(bindings=bindings, stream_handle=stream.handle)
+#         # Transfer prediction output from the GPU.
+#         cuda.memcpy_dtoh_async(output_buffer, output_memory, stream)
+#         # Synchronize the stream
+#         stream.synchronize()
+ 
+#     output = np.reshape(output_buffer, (batch_size, self.num_classes, image_height, image_width))
+#     return output

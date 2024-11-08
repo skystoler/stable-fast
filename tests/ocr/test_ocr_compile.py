@@ -16,11 +16,11 @@ PRINT_RECO_PATH = MODEL_DIR + 'uniocr_wfeat_241024152028_uniocr_add_spzonly_2410
 PRINT_FONT_PATH = MODEL_DIR + 'font47_240724_ft47_a100_mlp6240711_230.pth'
 PRINT_CHAR_SEG_PATH = MODEL_DIR + 'loc_std2_ft13_atv6_0305_376.pth'
 HW_RECO_PATH = MODEL_DIR + 'hw_832_blank_xingcao_1211_ep203.pth'
-PRINT_IMG_URL = IMAGE_DIR + '924_SPLIT_72311_40986bc2-48a1-11ef-a600-00163e153e23.jpg'
+PRINT_IMG_URL = IMAGE_DIR + 'text_rectification.jpg'
 HW_IMG_URL = IMAGE_DIR + 'e2bca13b366942768b722310d8aeee27.jpeg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
 DATA_LIST_PATH = SOURCE_DIR + 'download_188_20241106072127.txt'
-TRT_MODEL_PATH = MODEL_DIR + ''
+TRT_MODEL_PATH = MODEL_DIR + 'prt_ft13_emptyrecog_invert_0411_147_opt.ts'
 
 class IterationProfiler:
 
@@ -113,7 +113,7 @@ def test_single_pic():
     not compile
     """
     print('Begin warmup')
-    for _ in range(5):
+    for _ in range(3):
         model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
@@ -121,8 +121,6 @@ def test_single_pic():
     end = torch.cuda.Event(enable_timing=True)  # Create an end event
     start.record()
     output = model(images_t, masks_t, token_ids_t)
-    start = torch.cuda.Event(enable_timing=True)  # Create a start event
-    end = torch.cuda.Event(enable_timing=True)  # Create an end event
     end.record()
     torch.cuda.synchronize()
     infer_time = start.elapsed_time(end)
@@ -156,8 +154,6 @@ def test_single_pic():
     end = torch.cuda.Event(enable_timing=True)  # Create an end event
     start.record()
     optimize_output = model(images_t, masks_t, token_ids_t)
-    start = torch.cuda.Event(enable_timing=True)  # Create a start event
-    end = torch.cuda.Event(enable_timing=True)  # Create an end event
     end.record()
     torch.cuda.synchronize()
     compiled_infer_time = start.elapsed_time(end)
@@ -181,10 +177,10 @@ def test_compile_print_reco_model():
     """
     not compile
     """
-    print('Begin warmup')
-    for _ in range(5):
-        model(images_t, masks_t, token_ids_t)
-    print('End warmup')
+    # print('Begin warmup')
+    # for _ in range(3):
+    #     model(images_t, masks_t, token_ids_t)
+    # print('End warmup')
     
     """
     compile
@@ -209,7 +205,7 @@ def test_compile_print_reco_model():
     # print(f'Compile time: {end - begin:.3f}s')
     
     print('Begin warmup')
-    for _ in range(5):
+    for _ in range(3):
         compiled_model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
@@ -247,7 +243,7 @@ def test_compile_print_reco_model():
 
 def test_trt():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    executor = TrtExecutor(engine_file_path=TRT_MODEL_PATH, device_id=device)
+    executor = TrtExecutor(engine_file_path=TRT_MODEL_PATH)
     
     images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
     
@@ -272,12 +268,15 @@ def test_model_bottleneck():
     images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
     
     activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA]
-    with profile(activities=activities, record_shapes=True) as prof:
-        with record_function("model_inference"):
-            model(images_t, masks_t, token_ids_t)
-            
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+    def trace_handler(prof):
+        print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
     
+    with profile(activities=activities, schedule=torch.profiler.schedule(wait=0, warmup=4, active=1), on_trace_ready=trace_handler) as prof:
+        for iter in range(5):
+            model(images_t, masks_t, token_ids_t)
+            prof.step()
+
+
 if __name__ == '__main__':
     test_single_pic()
     # test_compile_print_reco_model()
