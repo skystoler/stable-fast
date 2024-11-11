@@ -7,6 +7,7 @@ from sfast.compilers.ocr_compiler import CompilationConfig, compile_print_reco_m
 from sfast.utils.trt import TrtExecutor
 import torchvision.models as models
 from torch.profiler import profile, record_function, ProfilerActivity
+import pickle
 
 SOURCE_DIR = "/root/autodl-tmp/data/"
 IMAGE_DIR = SOURCE_DIR + "image/"
@@ -21,6 +22,7 @@ HW_IMG_URL = IMAGE_DIR + 'e2bca13b366942768b722310d8aeee27.jpeg'
 TRT_SO_PATH = SOURCE_DIR + 'trt_executor_extension_py38.so'
 DATA_LIST_PATH = SOURCE_DIR + 'download_188_20241106072127.txt'
 TRT_MODEL_PATH = MODEL_DIR + 'prt_ft13_emptyrecog_invert_0411_147_opt.ts'
+PICKLE_PATH = SOURCE_DIR + 'model_input_data.pkl'
 
 class IterationProfiler:
 
@@ -101,6 +103,14 @@ def prof(func):
     end = torch.cuda.Event(enable_timing=True)  # Create an end event
     start.record()
 
+def load_input_from_pickle(device):
+    with open(PICKLE_PATH, 'rb') as pickle_file:
+        data_dict = pickle.load(pickle_file)
+    images, masks, token_ids = data_dict['stacked_images'], data_dict['stacked_masks'], data_dict['stacked_token_ids']
+    images_t = images.half().to(device)
+    masks_t = masks.half().to(device)
+    token_ids_t = token_ids.to(torch.int64).to(device)
+    return images_t, masks_t, token_ids_t
 
 def test_single_pic():
     print(torch.__version__)
@@ -108,7 +118,9 @@ def test_single_pic():
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
     
-    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    # images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    images_t, masks_t, token_ids_t = load_input_from_pickle(device)
+    print(images_t.size(), images_t.device, images_t.dtype)
     """
     not compile
     """
@@ -117,14 +129,19 @@ def test_single_pic():
         model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
+    torch.cuda.synchronize()
     start = torch.cuda.Event(enable_timing=True)  # Create a start event
     end = torch.cuda.Event(enable_timing=True)  # Create an end event
     start.record()
-    output = model(images_t, masks_t, token_ids_t)
+    # start = time.time()
+    with torch.no_grad():
+        output = model(images_t, masks_t, token_ids_t)
+    # end = time.time()
+    # infer_time = end - start
     end.record()
     torch.cuda.synchronize()
     infer_time = start.elapsed_time(end)
-    print(f'Orignal Inference time: {infer_time:.3f}s')
+    print(f'Orignal Inference time: {infer_time:.3f}ms')
     # peak_mem = torch.cuda.max_memory_allocated()
     # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
     
@@ -132,7 +149,7 @@ def test_single_pic():
     compile
     """
     begin = time.time()
-    compiled_model = torch.compile(model, mode='max-autotune')
+    compiled_model = torch.compile(model)
     end = time.time()
     print(f'Compile time: {end - begin:.3f}s')
     
@@ -143,21 +160,22 @@ def test_single_pic():
     # except ImportError:
     #     print('Triton not installed, skip')
         
-    # compile_print_reco_model(model, config)
+    # compiled_model = compile_print_reco_model(model, config)
 
     print('Begin warmup')
-    for _ in range(5):
+    for _ in range(3):
         compiled_model(images_t, masks_t, token_ids_t)
     print('End warmup')
     
     start = torch.cuda.Event(enable_timing=True)  # Create a start event
     end = torch.cuda.Event(enable_timing=True)  # Create an end event
     start.record()
-    optimize_output = model(images_t, masks_t, token_ids_t)
+    with torch.no_grad():
+        optimize_output = compiled_model(images_t, masks_t, token_ids_t)
     end.record()
     torch.cuda.synchronize()
     compiled_infer_time = start.elapsed_time(end)
-    print(f'Compiled Inference time: {compiled_infer_time:.3f}s')
+    print(f'Compiled Inference time: {compiled_infer_time:.3f}ms')
     # peak_mem = torch.cuda.max_memory_allocated()
     # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
     
@@ -165,6 +183,8 @@ def test_single_pic():
     print(f'Speed up: {speed_up:.3f}')
     
     torch.testing.assert_close(output, optimize_output)
+    del model
+    del compiled_model
         
     
 def test_compile_print_reco_model():
@@ -173,7 +193,8 @@ def test_compile_print_reco_model():
     model = torch.jit.load(PRINT_RECO_PATH, map_location=device)
     model.eval()
     
-    images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    # images_t, masks_t, token_ids_t = prepare_input(img_url=PRINT_IMG_URL, device=device)
+    images_t, masks_t, token_ids_t = load_input_from_pickle(device)
     """
     not compile
     """
@@ -185,24 +206,24 @@ def test_compile_print_reco_model():
     """
     compile
     """
-    begin = time.time()
-    compiled_model = torch.compile(model, mode ="max-autotune")
-    end = time.time()
-    print(f'Compile time: {end - begin:.3f}s')
+    # begin = time.time()
+    # compiled_model = torch.compile(model, mode ="max-autotune")
+    # end = time.time()
+    # print(f'Compile time: {end - begin:.3f}s')
     
     """
     self-compile
     """
-    # config = CompilationConfig.Default()
-    # try:
-    #     import triton
-    #     config.enable_triton = True
-    # except ImportError:
-    #     print('Triton not installed, skip')
-    # begin = time.time() 
-    # compiled_model = compile_print_reco_model(model, config)
-    # end = time.time()
-    # print(f'Compile time: {end - begin:.3f}s')
+    config = CompilationConfig.Default()
+    try:
+        import triton
+        config.enable_triton = True
+    except ImportError:
+        print('Triton not installed, skip')
+    begin = time.time() 
+    compiled_model = compile_print_reco_model(model, config)
+    end = time.time()
+    print(f'Compile time: {end - begin:.3f}s')
     
     print('Begin warmup')
     for _ in range(3):
@@ -215,10 +236,12 @@ def test_compile_print_reco_model():
     for index, img in enumerate(images[:test_cnt]):
         print(index + 1, img)
         img_url = IMAGE_DIR + img
-        images_t, masks_t, token_ids_t = prepare_input(img_url=img_url, device=device)
+        # images_t, masks_t, token_ids_t = prepare_input(img_url=img_url, device=device)
+        images_t, masks_t, token_ids_t = load_input_from_pickle(device)
 
         begin = time.time()
-        output = model(images_t, masks_t, token_ids_t)
+        with torch.no_grad():
+            output = model(images_t, masks_t, token_ids_t)
         end = time.time()
         infer_time = end - begin 
         print(f'Orignal Inference time: {infer_time:.3f}s')
@@ -226,7 +249,8 @@ def test_compile_print_reco_model():
         # print(f'Peak memory: {peak_mem / 1024**3:.3f}GiB')
         
         begin = time.time()
-        optimize_output = compiled_model(images_t, masks_t, token_ids_t)
+        with torch.no_grad():
+            optimize_output = compiled_model(images_t, masks_t, token_ids_t)
         end = time.time()
         compiled_infer_time = end - begin
         print(f'Compiled Inference time: {compiled_infer_time:.3f}s')
@@ -239,6 +263,8 @@ def test_compile_print_reco_model():
         
         #torch.testing.assert_close(output, optimize_output)
     print(f'Avergae Speed up: {(speed_up_sum / test_cnt):.3f}')
+    del model
+    del compiled_model
 
 
 def test_trt():
@@ -278,7 +304,7 @@ def test_model_bottleneck():
 
 
 if __name__ == '__main__':
-    test_single_pic()
-    # test_compile_print_reco_model()
+    # test_single_pic()
+    test_compile_print_reco_model()
     # test_trt()
     # test_model_bottleneck()
